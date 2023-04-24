@@ -1,5 +1,6 @@
+import { capitalize } from './../utils/index'
 import { load } from 'cheerio'
-import axios from 'axios'
+import axios, { AxiosResponse } from 'axios'
 import { arrToObj, clean } from '../utils'
 const _errors = ['NOT_FOUND'] as const
 const ERRORS = arrToObj(_errors)
@@ -11,31 +12,70 @@ const SKYTECH = {
   DEFAULT_QUERY: '?pav=1&grp=0&pagesize=500',
 } as const
 
+interface ScrapeOptions {
+  baseUrl: string
+  cpus?: string
+  psus?: string
+  defaultQuery?: string
+}
+
+const useProductScraper = (options: ScrapeOptions) => {
+  const _url = options.baseUrl
+  const _http = axios.create({ baseURL: _url })
+  function toSiteUri(path: string | undefined) {
+    if (path) {
+      return path.startsWith('/') ? _url + path : _url + '/' + path
+    }
+    return ERRORS.NOT_FOUND
+  }
+  type Methods = Exclude<keyof ScrapeOptions, 'defaultQuery' | 'baseUrl'>
+  const methods = Object.entries(options)
+    .filter(([key]) => !['baseUrl', 'defaultQuery'].includes(key))
+    .reduce((sum, [key, resourcePath]) => {
+      sum[`get${key as Methods}`] = () =>
+        _http.get(resourcePath + options.defaultQuery)
+      return sum
+    }, {} as Record<`get${Methods}`, <T, U = any>() => Promise<AxiosResponse<T, U>>>)
+  return {
+    toSiteUri,
+    http: _http,
+    ...methods,
+  }
+}
+
 interface ScrapeResponse {
+  id: string | number
   name: string
-  id: string
+  product_id: string
   price: string
   img: string
   url: string
 }
 
 export default defineEventHandler(async () => {
-  const data = [] as Partial<ScrapeResponse>[]
-  const $http = SKYTECH.CREATE()
-  const html = await $http.get<string>(SKYTECH.CPU + SKYTECH.DEFAULT_QUERY)
+  const data = [] as ScrapeResponse[]
+  const scraper = useProductScraper({
+    baseUrl: 'https://www.skytech.lt',
+    cpus: '/kompiuteriu-komponentai-procesoriai-cpu-c-86_85_584.html',
+    defaultQuery: '?pav=1&grp=0&pagesize=500',
+  })
+  const html = await scraper.getcpus<string>()
   const $ = load(html.data)
-  const dataTable = $('table tr.productListing').each(function () {
+  $('table tr.productListing').each(function () {
     const $row = $(this)
-    const url = $row.find('a').attr('href')
+    const url = scraper.toSiteUri($row.find('a').attr('href'))
+    const id = url.split('-').at(-1)?.replace('.html', '') as string
     const $img = $row.find('img')
-    const img = $img.attr('src')
+    const img = scraper.toSiteUri($img.attr('src'))
     const price = $row.children().last().prev().text()
-    const [id, name] = clean($img.attr('title'))?.split('<br />')
+    const [productId, name] = clean($img.attr('title'))?.split('<br />')
     data.push({
-      id: id.replace('MODELIS: ', ''),
+      id,
+      product_id: productId.replace('MODELIS: ', ''),
       img,
       name,
       price: clean(price),
+      url,
     })
   })
   return {
