@@ -56,7 +56,7 @@ watch(
       labels: priceHist.data.map((entry) => entry[0]),
       datasets: [
         {
-          label: currentCPU!.name,
+          label: currentCPU!.name.substring(0, 60),
           data: priceHist.data.map((entry) => parseFloat(entry[1])),
           borderColor: '#0054a6',
         },

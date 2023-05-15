@@ -1,7 +1,7 @@
-import { capitalize } from './../utils/index'
-import { load } from 'cheerio'
+import { capitalize, exclude } from './../utils/index'
+import { Cheerio, load, Element, CheerioAPI } from 'cheerio'
 import axios, { AxiosResponse } from 'axios'
-import { arrToObj, clean } from '../utils'
+import { arrToObj, clean, writeToFile } from '../utils'
 const _errors = ['NOT_FOUND'] as const
 const ERRORS = arrToObj(_errors)
 
@@ -11,6 +11,37 @@ const SKYTECH = {
   PSU: '',
   DEFAULT_QUERY: '?pav=1&grp=0&pagesize=500',
 } as const
+
+type ProductScrape = {
+  basePath: string
+  basePluck: (
+    element: CheerioAPI,
+    extras: { toSiteUri: (path: string) => string }
+  ) => ScrapeResponse[]
+  deepPluck?: (element: CheerioAPI) => Record<string, any>
+}
+
+type ScraperOptions = {
+  baseUrl: string
+  delay: number
+  defaultQuery?: string
+  cpu?: ProductScrape
+  gpu?: ProductScrape
+  mobos: ProductScrape
+}
+interface ScrapeResponse {
+  id: string | number
+  name: string
+  product_id: string
+  price: string
+  img: string
+  url: string
+  in_stock: boolean
+  details?: Record<string, any>
+}
+
+const wait = (time: number) =>
+  new Promise((resolve) => setTimeout(resolve, time))
 
 interface ScrapeOptions {
   baseUrl: string
@@ -43,15 +74,6 @@ const useProductScraper = (options: ScrapeOptions) => {
   }
 }
 
-interface ScrapeResponse {
-  id: string | number
-  name: string
-  product_id: string
-  price: string
-  img: string
-  url: string
-}
-
 export default defineEventHandler(async () => {
   const data = [] as ScrapeResponse[]
   const scraper = useProductScraper({
@@ -67,10 +89,12 @@ export default defineEventHandler(async () => {
     const id = url.split('-').at(-1)?.replace('.html', '') as string
     const $img = $row.find('img')
     const img = scraper.toSiteUri($img.attr('src'))
+    const in_stock = !$row.hasClass('nostock')
     const price = $row.children().last().prev().text()
     const [productId, name] = clean($img.attr('title'))?.split('<br />')
     data.push({
       id,
+      in_stock,
       product_id: productId.replace('MODELIS: ', ''),
       img,
       name,
@@ -78,6 +102,8 @@ export default defineEventHandler(async () => {
       url,
     })
   })
+
+  writeToFile('~/assets/statics/skytech.json', data)
   return {
     data,
   }
